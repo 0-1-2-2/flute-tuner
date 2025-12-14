@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flute Tone Stability Checker</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+      text-align: center;
+      padding: 20px;
+    }
+    canvas {
+      background: #000;
+      border: 1px solid #444;
+      margin-top: 10px;
+    }
+    button {
+      font-size: 16px;
+      padding: 8px 16px;
+      margin: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎶 フルート音程安定チェック</h1>
+  <button id="start">マイク開始</button>
+  <div id="info">---</div>
+  <canvas id="graph" width="800" height="400"></canvas>
+
+  <script>
+    const startBtn = document.getElementById("start");
+    const info = document.getElementById("info");
+    const canvas = document.getElementById("graph");
+    const ctx = canvas.getContext("2d");
+
+    let audioCtx, analyser, dataArray;
+    let freqHistory = [];
+
+    startBtn.onclick = async () => {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const source = audioCtx.createMediaStreamSource(stream);
+
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      dataArray = new Float32Array(analyser.fftSize);
+
+      source.connect(analyser);
+      draw();
+    };
+
+    function autoCorrelate(buf, sampleRate) {
+      let SIZE = buf.length;
+      let rms = 0;
+      for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+      rms = Math.sqrt(rms / SIZE);
+      if (rms < 0.01) return -1;
+
+      let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+      for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+      for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+      buf = buf.slice(r1, r2);
+
+      let c = new Array(buf.length).fill(0);
+      for (let i = 0; i < buf.length; i++) {
+        for (let j = 0; j < buf.length - i; j++) {
+          c[i] += buf[j] * buf[j + i];
+        }
+      }
+      let d = 0;
+      while (c[d] > c[d + 1]) d++;
+      let maxval = -1, maxpos = -1;
+      for (let i = d; i < c.length; i++) {
+        if (c[i] > maxval) {
+          maxval = c[i];
+          maxpos = i;
+        }
+      }
+      return sampleRate / maxpos;
+    }
+
+    function draw() {
+      analyser.getFloatTimeDomainData(dataArray);
+      const freq = autoCorrelate(dataArray, audioCtx.sampleRate);
+
+      if (freq > 0) {
+        freqHistory.push(freq);
+        if (freqHistory.length > 100) freqHistory.shift();
+
+        const avg = freqHistory.reduce((a, b) => a + b, 0) / freqHistory.length;
+        const maxDev = Math.max(...freqHistory.map(f => Math.abs(f - avg)));
+
+        info.textContent = `周波数: ${freq.toFixed(1)} Hz / 揺れ幅: ±${maxDev.toFixed(2)} Hz`;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+        freqHistory.forEach((f, i) => {
+          const x = (i / 100) * canvas.width;
+          const y = canvas.height / 2 - (f - avg) * 40;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = "#0f0";
+        ctx.stroke();
+      }
+      requestAnimationFrame(draw);
+    }
+  </script>
+</body>
+</html>
